@@ -1,0 +1,6 @@
+Beacon bundles mpegts.js (https://github.com/xqq/mpegts.js), Copyright (C)
+2021 magicxqq, licensed under the Apache License, Version 2.0. A copy of the
+licence is at http://www.apache.org/licenses/LICENSE-2.0.
+
+The library is embedded verbatim in core/src/mpegts_js.cpp so that a viewer
+can render a stream without fetching anything from a server.

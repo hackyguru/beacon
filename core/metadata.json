@@ -1,0 +1,29 @@
+{
+  "name": "beacon_core",
+  "version": "0.1.0",
+  "type": "core",
+  "interface": "universal",
+  "category": "communication",
+  "description": "Beacon core — one-way live streaming over logos-delivery",
+  "main": "beacon_core_plugin",
+  "dependencies": [
+    "delivery_module"
+  ],
+  "nix": {
+    "packages": {
+      "build": [
+        "pkg-config"
+      ],
+      "runtime": [
+        "libsodium"
+      ]
+    },
+    "external_libraries": [],
+    "cmake": {
+      "find_packages": [],
+      "extra_sources": [],
+      "extra_include_dirs": [],
+      "extra_link_libraries": []
+    }
+  }
+}
