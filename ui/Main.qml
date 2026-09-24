@@ -414,13 +414,6 @@ Rectangle {
                 sourceSize: Qt.size(128, 128)
                 smooth: true
             }
-            LogosText {
-                text: "Beacon"
-                color: Theme.palette.text
-                font.pixelSize: Theme.typography.subtitleText
-                font.weight: Theme.typography.weightBold
-                Layout.rightMargin: Theme.spacing.small
-            }
             LogosTabBar {
                 id: tabBar
                 Layout.fillWidth: true
