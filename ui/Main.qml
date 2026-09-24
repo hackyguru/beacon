@@ -721,7 +721,13 @@ Rectangle {
                 Card {
                     visible: root.tab === 1
                     title: root.broadcasting ? "You are live" : "Go live"
-                    Layout.alignment: Qt.AlignTop
+                    // The two Broadcast cards split the panel evenly. A
+                    // preferred height of 1 apiece makes the split equal
+                    // whatever the content; the minimum keeps either from
+                    // being squashed below what it needs.
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: 1
+                    Layout.minimumHeight: implicitHeight
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -844,12 +850,18 @@ Rectangle {
                             }
                         }
                     }
+
+                    Item {
+                        Layout.fillHeight: true
+                    }
                 }
 
                 Card {
                     visible: root.tab === 1
                     title: "Your station key"
-                    Layout.alignment: Qt.AlignTop
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: 1
+                    Layout.minimumHeight: implicitHeight
                     Mono {
                         Layout.fillWidth: true
                         text: root.station.length ? root.station : "—"
@@ -926,14 +938,14 @@ Rectangle {
                             onClicked: root.importStation(importField.text)
                         }
                     }
+
+                    Item {
+                        Layout.fillHeight: true
+                    }
                 }
 
-                // Only the Broadcast tab needs a spacer: on Watch, Live now
-                // takes the remaining height itself.
-                Item {
-                    Layout.fillHeight: true
-                    visible: root.tab === 1
-                }
+                // No spacer: on Watch, Live now takes the remaining height;
+                // on Broadcast, the two cards share it between them.
             }
         }
     }
