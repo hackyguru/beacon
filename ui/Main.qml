@@ -707,7 +707,7 @@ Rectangle {
                         }
                         LogosText {
                             Layout.fillWidth: true
-                            text: "In OBS: Settings ▸ Output ▸ Recording, type \"Custom Output (FFmpeg)\", container mpegts, and that address as the URL. Then Start Recording."
+                            text: "In OBS: Settings ▸ Output ▸ Output Mode: Advanced ▸ Recording. Type: Custom Output (FFmpeg), FFmpeg Output Type: Output to URL, that address as the URL, container mpegts. Then Start Recording (not Start Streaming)."
                             wrapMode: Text.Wrap
                             color: Theme.palette.textTertiary
                             font.pixelSize: 11

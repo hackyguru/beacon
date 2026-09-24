@@ -78,7 +78,7 @@ cd .. && ./install.sh
 
 1. Open Beacon, go to **Broadcast**, give the stream a title and press **Start broadcasting**.
 2. Copy the ingest address it shows, for example `udp://127.0.0.1:51631`.
-3. In OBS: **Settings ▸ Output ▸ Recording**, type **Custom Output (FFmpeg)**, container **mpegts**, and that address as the URL. Then **Start Recording**.
+3. In OBS: **Settings ▸ Output**, set **Output Mode: Advanced** (the FFmpeg option does not exist in Simple mode), then the **Recording** tab. **Type: Custom Output (FFmpeg)**, **FFmpeg Output Type: Output to URL**, that address as the URL, **Container Format: mpegts**, video encoder `libx264`, audio encoder `aac`. Then **Start Recording** — not Start Streaming.
 4. Share your station key. It is on the Broadcast tab.
 
 With plain ffmpeg instead of OBS:
