@@ -387,6 +387,65 @@ Rectangle {
         }
     }
 
+    // Analogue snow for the empty screen. Six small tileable frames cycled at
+    // random beats the alternatives: a shader needs precompiling for Qt 6, and
+    // generating noise per pixel in a Canvas costs more CPU than an idle screen
+    // deserves. Kept faint — it should read as "no signal", not as decoration.
+    component StaticNoise: Item {
+        id: snow
+        clip: true
+        Image {
+            id: grain
+            property int frame: 1
+            source: "assets/noise" + frame + ".png"
+            fillMode: Image.Tile
+            smooth: false
+            // Oversized so the random offset never exposes an edge.
+            x: -64
+            y: -64
+            width: snow.width + 128
+            height: snow.height + 128
+            opacity: 0.16
+        }
+        Timer {
+            interval: 70
+            running: snow.visible
+            repeat: true
+            onTriggered: {
+                grain.frame = 1 + Math.floor(Math.random() * 6);
+                grain.x = -64 + Math.floor(Math.random() * 64);
+                grain.y = -64 + Math.floor(Math.random() * 64);
+            }
+        }
+        // A band drifting down the screen, the way an untuned set rolls.
+        Rectangle {
+            width: snow.width
+            height: 110
+            opacity: 0.05
+            gradient: Gradient {
+                GradientStop {
+                    position: 0.0
+                    color: "transparent"
+                }
+                GradientStop {
+                    position: 0.5
+                    color: "#FFFFFF"
+                }
+                GradientStop {
+                    position: 1.0
+                    color: "transparent"
+                }
+            }
+            NumberAnimation on y {
+                running: snow.visible
+                from: -110
+                to: snow.height
+                duration: 7000
+                loops: Animation.Infinite
+            }
+        }
+    }
+
     component FieldLabel: LogosText {
         color: Theme.palette.textSecondary
         font.pixelSize: 11
@@ -440,7 +499,7 @@ Rectangle {
             Layout.fillWidth: true
             spacing: Theme.spacing.medium
             Image {
-                source: "icons/beacon.png"
+                source: "../icons/beacon.png"
                 Layout.preferredWidth: 32
                 Layout.preferredHeight: 32
                 sourceSize: Qt.size(128, 128)
@@ -544,6 +603,12 @@ Rectangle {
                         anchors.margins: 1
                         visible: root.playerUrl.length > 0
                         url: root.playerUrl
+                    }
+
+                    StaticNoise {
+                        anchors.fill: parent
+                        anchors.margins: 1
+                        visible: !view.visible
                     }
 
                     ColumnLayout {

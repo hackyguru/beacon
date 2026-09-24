@@ -53,6 +53,9 @@ printf '%s' "$VARIANT" > "$DEST/variant"
 
 echo "==> Installing UI -> plugins/beacon"
 DEST="$BASE/plugins/beacon"
+# Wipe first: a previous layout leaves files behind (a Main.qml at the root
+# after the view moved into qml/, say) and they are confusing at best.
+rm -rf "$DEST"
 mkdir -p "$DEST"
 cp -R "$TMP/ui/variants/$VARIANT/." "$DEST/"
 # The manifest points `icon` at assets/icon.png, which lives at the package

@@ -129,7 +129,7 @@ BEACON_TCPPORT=60001 open -n /Applications/LogosBasecamp.app
 | [`core/src/station.cpp`](core/src/station.cpp) | ed25519 station identity |
 | [`core/src/stream_buffer.cpp`](core/src/stream_buffer.cpp) | Reordering and gap handling |
 | [`core/src/http_server.cpp`](core/src/http_server.cpp) | The player page and the live stream |
-| [`ui/`](ui/) | The `beacon` frontend: Watch and Broadcast |
+| [`ui/qml/`](ui/qml/) | The `beacon` frontend: Watch and Broadcast, plus the noise frames for an empty screen |
 
 ## Status
 
