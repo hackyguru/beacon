@@ -25,7 +25,7 @@ Ingest::~Ingest()
     stop();
 }
 
-bool Ingest::start(const Sink& sink, std::string& error)
+bool Ingest::start(const Sink& sink, std::string& error, int preferredPort)
 {
     if (m_running) return true;
 
@@ -43,13 +43,18 @@ bool Ingest::start(const Sink& sink, std::string& error)
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port        = 0;                       // ephemeral: two Basecamps must not collide
+    addr.sin_port        = htons(static_cast<uint16_t>(preferredPort));
 
     if (::bind(m_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        error = std::string("bind: ") + std::strerror(errno);
-        ::close(m_fd);
-        m_fd = -1;
-        return false;
+        // Someone else has it (a second Basecamp, a leftover process): fall back
+        // to an ephemeral port rather than refusing to go live.
+        addr.sin_port = 0;
+        if (::bind(m_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            error = std::string("bind: ") + std::strerror(errno);
+            ::close(m_fd);
+            m_fd = -1;
+            return false;
+        }
     }
 
     socklen_t len = sizeof(addr);

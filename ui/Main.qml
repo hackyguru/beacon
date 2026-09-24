@@ -35,6 +35,10 @@ Rectangle {
     readonly property bool playing: broadcasting || watching.length > 0
     readonly property var ingest: st.ingest || ({})
     readonly property var player: st.player || ({})
+    // The WebView's url must NOT be bound to st: st is replaced by every poll,
+    // and rebinding reloads the page — which restarted the video once a second
+    // and looked like flicker. Only a genuinely different URL is assigned.
+    property string playerUrl: ""
     readonly property var directory: st.directory || []
     readonly property int netStatus: st.netStatus || 0
 
@@ -75,8 +79,14 @@ Rectangle {
     }
     function refresh() {
         call2("state", function (s) {
-            if (s && typeof s === "object")
-                root.st = s;
+            if (!s || typeof s !== "object")
+                return;
+            root.st = s;
+            const wanted = (s.player && s.player.url) ? s.player.url : "";
+            const show = (s.broadcasting === true || (s.watching || "").length > 0) && wanted.length > 0;
+            const next = show ? wanted : "";
+            if (next !== root.playerUrl)
+                root.playerUrl = next;
         });
     }
     function call2(method, cb) {
@@ -447,8 +457,8 @@ Rectangle {
                         id: view
                         anchors.fill: parent
                         anchors.margins: 1
-                        visible: root.playing && (root.player.url || "").length > 0
-                        url: visible ? root.player.url : ""
+                        visible: root.playerUrl.length > 0
+                        url: root.playerUrl
                     }
 
                     ColumnLayout {

@@ -30,8 +30,13 @@ public:
 
     ~Ingest();
 
-    /** Binds an ephemeral UDP port and starts reading. */
-    bool start(const Sink& sink, std::string& error);
+    /**
+     * Binds `preferredPort` (0 for ephemeral) and starts reading. A port that
+     * stays the same across broadcasts matters more than it sounds: OBS keeps
+     * the URL in its own settings, and re-entering it means reopening a dialog
+     * that resets the encoder choice.
+     */
+    bool start(const Sink& sink, std::string& error, int preferredPort = 0);
     void stop();
 
     bool     running() const { return m_running; }

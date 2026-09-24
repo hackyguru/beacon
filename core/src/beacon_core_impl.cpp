@@ -226,8 +226,13 @@ StdLogosResult BeaconCoreImpl::startBroadcast(const std::string& title)
         m_pendingFragment.clear();
     }
 
+    // A fixed port by default, so OBS is configured once and never again.
+    const char* ingestEnv = std::getenv("BEACON_INGEST_PORT");
+    const char* tcpEnv    = std::getenv("BEACON_TCPPORT");
+    const int ingestPort = ingestEnv ? std::atoi(ingestEnv) : (tcpEnv && *tcpEnv ? 9912 : 9911);
+
     std::string err;
-    if (!m_ingest->start([this](const uint8_t* d, size_t n) { onIngest(d, n); }, err)) {
+    if (!m_ingest->start([this](const uint8_t* d, size_t n) { onIngest(d, n); }, err, ingestPort)) {
         std::lock_guard<std::mutex> lk(m_mu);
         m_lastError = err;
         return {false, {}, err};
@@ -273,7 +278,12 @@ void BeaconCoreImpl::flushLocked()
 {
     if (m_pendingFragment.empty()) return;
 
-    const size_t take = std::min(m_pendingFragment.size(), kFragmentBytes);
+    // Always publish a whole number of 188-byte transport packets. A fragment
+    // cut mid-packet leaves the decoder hunting for sync, which looks like a
+    // flickering picture rather than a dropped frame.
+    size_t take = std::min(m_pendingFragment.size(), kFragmentBytes);
+    take -= take % 188;
+    if (take == 0) return;
     std::vector<uint8_t> payload(m_pendingFragment.begin(), m_pendingFragment.begin() + take);
     m_pendingFragment.erase(m_pendingFragment.begin(), m_pendingFragment.begin() + take);
 
@@ -498,6 +508,10 @@ std::string BeaconCoreImpl::state()
     play["fragments"] = m_buffer->fragments();
     play["gaps"]      = m_buffer->gaps();
     play["bytes"]     = m_buffer->bytes();
+    play["dropped"]   = m_buffer->dropped();
+    play["report"]    = m_http->playerLog();
+    play["requests"]  = m_http->requestCounts();
+    play["readers"]   = m_buffer->readerCount();
     st["player"] = play;
 
     return st.dump();

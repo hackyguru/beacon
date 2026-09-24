@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -43,6 +44,12 @@ public:
     /** JSON served at /stats — how the module reports itself without the UI. */
     void setStatsProvider(std::function<std::string()> fn);
 
+    /** The player page posts its own state to /log; this is the last one. */
+    std::string playerLog() const;
+
+    /** How many times each route was requested — did the WebView load at all? */
+    std::string requestCounts() const;
+
     int  port() const { return m_port; }
     bool running() const { return m_running; }
     std::string error() const;
@@ -62,15 +69,13 @@ private:
     int               m_listenFd = -1;
 
     std::atomic<StreamBuffer*> m_source{nullptr};
-    // The buffer has one consumer: bytes read by one viewer are gone for any
-    // other. A reconnecting player would otherwise fight its own stale
-    // connection for frames, so the newest /live.ts wins and older ones exit.
-    std::atomic<uint64_t>      m_liveGen{0};
 
     std::function<std::string()> m_stats;
 
     mutable std::mutex m_mu;
     std::string        m_error;
+    std::string        m_playerLog;
+    std::map<std::string, uint64_t> m_hits;
 };
 
 } // namespace beacon

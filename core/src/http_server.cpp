@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -29,53 +30,83 @@ const char* const kPlayerHtml = R"HTML(<!doctype html>
   html,body{margin:0;height:100%;background:#000;overflow:hidden;
             font:13px -apple-system,system-ui,sans-serif;color:#EDEDED}
   #v{width:100%;height:100%;object-fit:contain;background:#000}
-  #o{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  #o{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+     background:rgba(0,0,0,.35)}
   #b{background:#ED7B58;color:#241511;border:0;border-radius:999px;
-     padding:12px 22px;font-weight:700;font-size:14px;cursor:pointer}
+     padding:14px 26px;font-weight:700;font-size:15px;cursor:pointer}
   #s{position:fixed;left:0;right:0;bottom:0;padding:6px 10px;color:#9a9a9a;
      background:rgba(0,0,0,.45);font-size:11px}
   .hidden{display:none!important}
 </style></head><body>
 <video id="v" muted playsinline autoplay></video>
-<div id="o"><button id="b">Tap for sound</button></div>
+<div id="o"><button id="b">Play</button></div>
 <div id="s">connecting…</div>
 <script src="mpegts.js"></script>
 <script>
   var v=document.getElementById('v'), s=document.getElementById('s'),
-      o=document.getElementById('o'), b=document.getElementById('b'), player=null;
-  function status(t){ s.textContent=t; }
+      o=document.getElementById('o'), b=document.getElementById('b'),
+      player=null, lastErr='', started=false;
+
+  function report(){
+    var f={};
+    try{ f=mpegts.getFeatureList(); }catch(e){}
+    var buf=[];
+    try{ for(var i=0;i<v.buffered.length;i++) buf.push(v.buffered.start(i).toFixed(1)+'-'+v.buffered.end(i).toFixed(1)); }catch(e){}
+    var st={
+      mse: !!(window.MediaSource), mseLive: !!f.mseLivePlayback,
+      msePlus: !!f.mseLiveFlvPlayback, ready: v.readyState, net: v.networkState,
+      paused: v.paused, muted: v.muted, t: +v.currentTime.toFixed(2),
+      w: v.videoWidth, h: v.videoHeight, buffered: buf.join(','),
+      err: lastErr || (v.error ? ('media '+v.error.code+' '+(v.error.message||'')) : ''),
+      ua: navigator.userAgent.slice(0,80)
+    };
+    try{ fetch('log',{method:'POST',body:JSON.stringify(st)}); }catch(e){}
+    s.textContent = (st.w? st.w+'x'+st.h+' ':'') + 'ready='+st.ready+
+      (st.paused?' paused':'') + (st.err? ' · '+st.err : '') +
+      (st.buffered? ' · buf '+st.buffered : '');
+    if(!v.paused && st.ready>=2) o.classList.add('hidden');
+  }
+  report();
+  setInterval(report, 1000);
+
   function start(){
-    if(!mpegts.getFeatureList().mseLivePlayback){ status('this WebView cannot play live streams'); return; }
+    var f = mpegts.getFeatureList();
+    if(!f.mseLivePlayback){ lastErr='MSE live playback unsupported'; report(); return; }
     player = mpegts.createPlayer(
       { type:'mpegts', isLive:true, url:'live.ts' },
-      { enableWorker:false, liveBufferLatencyChasing:true, lazyLoad:false,
-        fixAudioTimestampGap:true, autoCleanupSourceBuffer:true });
+      { enableWorker:false, lazyLoad:false, fixAudioTimestampGap:true,
+        autoCleanupSourceBuffer:true,
+        liveBufferLatencyChasing:true, liveBufferLatencyMaxLatency:3.0,
+        liveBufferLatencyMinRemain:0.8 });
     player.attachMediaElement(v);
     player.on(mpegts.Events.ERROR, function(a,b2,c){
-      status('stream error: '+a+' '+b2); setTimeout(restart, 1500);
+      lastErr = 'stream '+a+'/'+b2; report(); setTimeout(restart, 2000);
     });
     player.load();
-    v.play().catch(function(){});
-    status('waiting for video…');
+    v.play().catch(function(e){ lastErr='autoplay blocked: '+e.name; report(); });
+    started=true;
   }
   function restart(){
     try{ if(player){ player.destroy(); player=null; } }catch(e){}
     start();
   }
-  v.addEventListener('playing', function(){ status(''); });
-  b.onclick=function(){ v.muted=false; v.play(); o.classList.add('hidden'); };
+  v.addEventListener('playing', function(){ lastErr=''; o.classList.add('hidden'); });
+  function go(){ v.muted=false; v.play().catch(function(e){ lastErr='play(): '+e.name; }); o.classList.add('hidden'); }
+  b.onclick=go; document.body.addEventListener('click', function(){ if(v.paused) go(); });
   start();
 </script></body></html>
 )HTML";
 
-void sendAll(int fd, const char* data, size_t len)
+/** False once the peer has gone away — the caller should stop streaming. */
+bool sendAll(int fd, const char* data, size_t len)
 {
     size_t sent = 0;
     while (sent < len) {
         const ssize_t n = ::send(fd, data + sent, len - sent, 0);
-        if (n <= 0) return;
+        if (n <= 0) return false;
         sent += static_cast<size_t>(n);
     }
+    return true;
 }
 
 void sendSimple(int fd, const char* status, const char* type, const std::string& body)
@@ -186,19 +217,70 @@ void HttpServer::acceptLoop()
     }
 }
 
+std::string HttpServer::playerLog() const
+{
+    std::lock_guard<std::mutex> lk(m_mu);
+    return m_playerLog;
+}
+
+std::string HttpServer::requestCounts() const
+{
+    std::lock_guard<std::mutex> lk(m_mu);
+    std::string out;
+    for (const auto& kv : m_hits) {
+        if (!out.empty()) out += " ";
+        out += kv.first + "=" + std::to_string(kv.second);
+    }
+    return out;
+}
+
 void HttpServer::handleClient(int fd)
 {
-    char buf[4096];
+    char buf[8192];
     const ssize_t n = ::recv(fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) return;
     buf[n] = '\0';
     const std::string req(buf);
+
+    // The player page reports what it sees — codec support, readyState, errors
+    // — so a black picture can be diagnosed without a devtools window, which a
+    // WebView inside a plugin does not have.
+    if (req.compare(0, 5, "POST ") == 0) {
+        const size_t bodyAt = req.find("\r\n\r\n");
+        if (bodyAt != std::string::npos) {
+            std::string body = req.substr(bodyAt + 4);
+
+            // fetch() sends the headers and the body in separate segments, so
+            // the first read usually stops at the blank line. Keep reading
+            // until Content-Length is satisfied or the peer stops talking.
+            size_t want = 0;
+            const size_t clAt = req.find("Content-Length:");
+            if (clAt != std::string::npos)
+                want = static_cast<size_t>(std::strtoul(req.c_str() + clAt + 15, nullptr, 10));
+            while (body.size() < want) {
+                const ssize_t more = ::recv(fd, buf, sizeof(buf) - 1, 0);
+                if (more <= 0) break;
+                buf[more] = '\0';
+                body.append(buf, static_cast<size_t>(more));
+            }
+
+            std::lock_guard<std::mutex> lk(m_mu);
+            m_playerLog = body;
+        }
+        sendSimple(fd, "200 OK", "text/plain", "ok");
+        return;
+    }
     if (req.compare(0, 4, "GET ") != 0) return;
 
     const size_t sp = req.find(' ', 4);
     std::string path = req.substr(4, sp - 4);
     const size_t q = path.find('?');
     if (q != std::string::npos) path = path.substr(0, q);
+
+    {
+        std::lock_guard<std::mutex> lk(m_mu);
+        ++m_hits[path];
+    }
 
     if (path == "/" || path == "/index.html") {
         sendSimple(fd, "200 OK", "text/html; charset=utf-8", kPlayerHtml);
@@ -241,27 +323,38 @@ void HttpServer::serveLive(int fd)
     sendAll(fd, head.c_str(), head.size());
 
     ++m_liveClients;
-    const uint64_t gen = ++m_liveGen;
+    // Each player gets its own view of the stream: two of them (a reconnect
+    // overlapping its predecessor, say) must not eat each other's bytes.
+    auto reader = src->addReader();
     std::vector<uint8_t> chunk(32 * 1024);
-    while (m_running && m_liveGen == gen) {
-        const size_t got = src->read(chunk.data(), chunk.size(), 500);
+    while (m_running) {
+        const size_t got = src->read(reader, chunk.data(), chunk.size(), 500);
+
+        // A player that closed its tab has to be noticed even when no video is
+        // flowing — otherwise every retry leaves a thread and a queue behind,
+        // and they accumulate in their hundreds while a station is off air.
+        char probe[1];
+        const ssize_t peek = ::recv(fd, probe, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (peek == 0) break;
+
         if (got == 0) {
-            // Keep the connection alive through a quiet stretch; a zero-length
+            // Keep the connection open through a quiet stretch; a zero-length
             // chunk would end the response.
             continue;
         }
         char sizeLine[32];
         const int sl = std::snprintf(sizeLine, sizeof(sizeLine), "%zx\r\n", got);
-        sendAll(fd, sizeLine, static_cast<size_t>(sl));
-        sendAll(fd, reinterpret_cast<const char*>(chunk.data()), got);
-        sendAll(fd, "\r\n", 2);
+        // A closed tab shows up as a failed send. Without acting on it the
+        // thread, and this reader's copy of the stream, live forever.
+        if (!sendAll(fd, sizeLine, static_cast<size_t>(sl)) ||
+            !sendAll(fd, reinterpret_cast<const char*>(chunk.data()), got) ||
+            !sendAll(fd, "\r\n", 2))
+            break;
 
         // Detect a viewer who closed the tab: a send to a dead socket fails and
         // ::send has already returned early, so probe the peer.
-        char probe[1];
-        const ssize_t r = ::recv(fd, probe, 1, MSG_PEEK | MSG_DONTWAIT);
-        if (r == 0) break;
     }
+    src->removeReader(reader);
     --m_liveClients;
 }
 

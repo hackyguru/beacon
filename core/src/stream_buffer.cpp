@@ -2,12 +2,35 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 
 namespace beacon {
 
-StreamBuffer::StreamBuffer(size_t window, size_t maxBytes)
-    : m_window(window), m_maxBytes(maxBytes)
+StreamBuffer::StreamBuffer(size_t window, size_t maxFragmentsPerReader)
+    : m_window(window), m_maxFragments(maxFragmentsPerReader)
 {
+}
+
+StreamBuffer::ReaderHandle StreamBuffer::addReader()
+{
+    auto reader = std::make_shared<Reader>();
+    {
+        std::lock_guard<std::mutex> lk(m_mu);
+        m_readers.push_back(reader);
+    }
+    return reader;
+}
+
+void StreamBuffer::removeReader(const ReaderHandle& reader)
+{
+    std::lock_guard<std::mutex> lk(m_mu);
+    m_readers.erase(std::remove(m_readers.begin(), m_readers.end(), reader), m_readers.end());
+}
+
+int StreamBuffer::readerCount() const
+{
+    std::lock_guard<std::mutex> lk(m_mu);
+    return static_cast<int>(m_readers.size());
 }
 
 void StreamBuffer::push(uint64_t seq, const std::vector<uint8_t>& payload)
@@ -16,13 +39,13 @@ void StreamBuffer::push(uint64_t seq, const std::vector<uint8_t>& payload)
         std::lock_guard<std::mutex> lk(m_mu);
         if (m_closed) return;
 
-        // First fragment seen sets the origin: a viewer joins mid-broadcast and
-        // must not wait for sequence 0 that was sent an hour ago.
+        // The first fragment seen sets the origin: a viewer joining mid-stream
+        // must not wait for a sequence sent an hour ago.
         if (!m_started) {
             m_started = true;
             m_next    = seq;
         }
-        if (seq < m_next) return;              // late or duplicate: already conceded
+        if (seq < m_next) return;            // late or duplicate: already conceded
         m_pending[seq] = payload;
         ++m_fragments;
         drainLocked();
@@ -30,48 +53,68 @@ void StreamBuffer::push(uint64_t seq, const std::vector<uint8_t>& payload)
     m_cv.notify_all();
 }
 
+void StreamBuffer::emitLocked(const std::vector<uint8_t>& payload)
+{
+    m_bytes += payload.size();
+    for (auto& r : m_readers) {
+        r->queue.push_back(payload);
+        // A player that stalled must not grow without bound. Drop whole
+        // fragments from the front — never part of one, which would leave the
+        // decoder mid-packet.
+        while (r->queue.size() > m_maxFragments) {
+            if (r->queue.size() == 1) break;
+            r->queue.pop_front();
+            r->offset = 0;
+            ++m_dropped;
+        }
+    }
+}
+
 void StreamBuffer::drainLocked()
 {
-    // Release everything contiguous from m_next.
     for (auto it = m_pending.find(m_next); it != m_pending.end(); it = m_pending.find(m_next)) {
-        m_out.insert(m_out.end(), it->second.begin(), it->second.end());
-        m_bytes += it->second.size();
+        emitLocked(it->second);
         m_pending.erase(it);
         ++m_next;
     }
 
     // Still stuck behind a missing fragment with a full window: concede the gap
-    // and jump to the oldest fragment we do hold.
+    // and continue from the oldest fragment held.
     while (m_pending.size() > m_window) {
         const uint64_t oldest = m_pending.begin()->first;
         m_gaps += (oldest > m_next) ? (oldest - m_next) : 1;
         m_next = oldest;
         for (auto it = m_pending.find(m_next); it != m_pending.end(); it = m_pending.find(m_next)) {
-            m_out.insert(m_out.end(), it->second.begin(), it->second.end());
-            m_bytes += it->second.size();
+            emitLocked(it->second);
             m_pending.erase(it);
             ++m_next;
         }
     }
-
-    // A viewer whose player stalled must not grow the buffer without bound;
-    // drop from the front, which is the oldest and least useful video.
-    while (m_out.size() > m_maxBytes)
-        m_out.pop_front();
 }
 
-size_t StreamBuffer::read(uint8_t* out, size_t max, int timeoutMs)
+size_t StreamBuffer::read(const ReaderHandle& reader, uint8_t* out, size_t max, int timeoutMs)
 {
-    std::unique_lock<std::mutex> lk(m_mu);
-    if (m_out.empty() && !m_closed)
-        m_cv.wait_for(lk, std::chrono::milliseconds(timeoutMs), [this] { return !m_out.empty() || m_closed; });
+    if (!reader) return 0;
 
-    const size_t n = std::min(max, m_out.size());
-    for (size_t i = 0; i < n; ++i) {
-        out[i] = m_out.front();
-        m_out.pop_front();
+    std::unique_lock<std::mutex> lk(m_mu);
+    if (reader->queue.empty() && !m_closed)
+        m_cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                      [&] { return !reader->queue.empty() || m_closed; });
+
+    size_t written = 0;
+    while (written < max && !reader->queue.empty()) {
+        const auto& front = reader->queue.front();
+        const size_t have = front.size() - reader->offset;
+        const size_t take = std::min(have, max - written);
+        std::memcpy(out + written, front.data() + reader->offset, take);
+        written        += take;
+        reader->offset += take;
+        if (reader->offset >= front.size()) {
+            reader->queue.pop_front();
+            reader->offset = 0;
+        }
     }
-    return n;
+    return written;
 }
 
 void StreamBuffer::reset()
@@ -79,10 +122,13 @@ void StreamBuffer::reset()
     {
         std::lock_guard<std::mutex> lk(m_mu);
         m_pending.clear();
-        m_out.clear();
+        for (auto& r : m_readers) {
+            r->queue.clear();
+            r->offset = 0;
+        }
         m_next    = 0;
         m_started = false;
-        m_fragments = m_gaps = m_bytes = 0;
+        m_fragments = m_gaps = m_bytes = m_dropped = 0;
     }
     m_cv.notify_all();
 }
@@ -118,6 +164,12 @@ uint64_t StreamBuffer::bytes() const
 {
     std::lock_guard<std::mutex> lk(m_mu);
     return m_bytes;
+}
+
+uint64_t StreamBuffer::dropped() const
+{
+    std::lock_guard<std::mutex> lk(m_mu);
+    return m_dropped;
 }
 
 } // namespace beacon
