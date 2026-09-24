@@ -966,7 +966,7 @@ Rectangle {
 
                         Card {
                             visible: root.tab === 1
-                            title: "Sending video"
+                            title: "Broadcast instructions"
                             Layout.alignment: Qt.AlignTop
                             StepRow {
                                 num: 1
