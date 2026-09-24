@@ -371,6 +371,7 @@ Rectangle {
     }
 
     component LiveDot: Row {
+        id: dotRow
         property bool live: false
         spacing: 6
         Rectangle {
@@ -380,7 +381,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             color: parent.live ? Theme.palette.error : Theme.palette.textTertiary
             SequentialAnimation on opacity {
-                running: parent.parent.live
+                running: dotRow.live
                 loops: Animation.Infinite
                 NumberAnimation {
                     from: 1
@@ -557,7 +558,7 @@ Rectangle {
                             spacing: 8
                             LiveDot {
                                 live: root.playing
-                                anchors.verticalCenter: parent.verticalCenter
+                                Layout.alignment: Qt.AlignVCenter
                             }
                             LogosText {
                                 text: root.broadcasting ? "LIVE · you" : "LIVE · " + root.shortKey(root.watching)
@@ -607,17 +608,59 @@ Rectangle {
                 Layout.maximumWidth: 400
                 spacing: Theme.spacing.large
 
-                // Watch
+                // Watch — the key field first, then Live now filling what is
+                // left. The list scrolls inside its own card, so a busy network
+                // never pushes the field off the panel.
+                Card {
+                    visible: root.tab === 0
+                    title: "Watch by key"
+                    Layout.alignment: Qt.AlignTop
+                    LogosTextField {
+                        id: keyField
+                        Layout.fillWidth: true
+                        implicitHeight: 40
+                        placeholderText: "64-character station key"
+                    }
+                    Connections {
+                        target: keyField.textInput
+                        function onAccepted() {
+                            root.watch(keyField.text.trim());
+                        }
+                    }
+                    ActionButton {
+                        Layout.fillWidth: true
+                        accent: true
+                        text: "Watch"
+                        enabled: keyField.text.trim().length === 64
+                        onClicked: root.watch(keyField.text.trim())
+                    }
+                    LogosText {
+                        Layout.fillWidth: true
+                        text: "A station's key is its identity: fragments signed by any other key are dropped, so nobody can take over a stream by publishing on its topic."
+                        wrapMode: Text.Wrap
+                        color: Theme.palette.textTertiary
+                        font.pixelSize: 11
+                    }
+                }
+
                 Card {
                     visible: root.tab === 0
                     title: "Live now"
-                    Layout.alignment: Qt.AlignTop
+                    Layout.fillHeight: true
+                    Layout.fillWidth: true
 
-                    Repeater {
+                    ListView {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        spacing: Theme.spacing.small
                         model: root.directory
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 54
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: LogosScrollBar {}
+
+                        delegate: Rectangle {
+                            width: ListView.view.width
+                            height: 54
                             radius: Theme.spacing.radiusMedium
                             color: rowMa.containsMouse ? Theme.palette.backgroundMuted : Theme.palette.backgroundInset
                             border.width: 1
@@ -671,38 +714,6 @@ Rectangle {
                         wrapMode: Text.Wrap
                         color: Theme.palette.textTertiary
                         font.pixelSize: Theme.typography.secondaryText
-                    }
-                }
-
-                Card {
-                    visible: root.tab === 0
-                    title: "Watch by key"
-                    Layout.alignment: Qt.AlignTop
-                    LogosTextField {
-                        id: keyField
-                        Layout.fillWidth: true
-                        implicitHeight: 40
-                        placeholderText: "64-character station key"
-                    }
-                    Connections {
-                        target: keyField.textInput
-                        function onAccepted() {
-                            root.watch(keyField.text.trim());
-                        }
-                    }
-                    ActionButton {
-                        Layout.fillWidth: true
-                        accent: true
-                        text: "Watch"
-                        enabled: keyField.text.trim().length === 64
-                        onClicked: root.watch(keyField.text.trim())
-                    }
-                    LogosText {
-                        Layout.fillWidth: true
-                        text: "A station's key is its identity: fragments signed by any other key are dropped, so nobody can take over a stream by publishing on its topic."
-                        wrapMode: Text.Wrap
-                        color: Theme.palette.textTertiary
-                        font.pixelSize: 11
                     }
                 }
 
@@ -917,8 +928,11 @@ Rectangle {
                     }
                 }
 
+                // Only the Broadcast tab needs a spacer: on Watch, Live now
+                // takes the remaining height itself.
                 Item {
                     Layout.fillHeight: true
+                    visible: root.tab === 1
                 }
             }
         }
