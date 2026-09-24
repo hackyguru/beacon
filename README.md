@@ -133,7 +133,7 @@ BEACON_TCPPORT=60001 open -n /Applications/LogosBasecamp.app
 
 ## Status
 
-Version 0.1.0. Measured on one machine, two Basecamp instances, ffmpeg standing in for OBS:
+Version 0.2.0. Measured on one machine, two Basecamp instances, ffmpeg standing in for OBS:
 
 | | |
 | --- | --- |

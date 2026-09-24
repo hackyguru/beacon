@@ -1,7 +1,7 @@
 {
   "name": "beacon",
   "displayName": "Beacon",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "ui_qml",
   "category": "communication",
   "description": "Beacon — live streaming with no server in between",
