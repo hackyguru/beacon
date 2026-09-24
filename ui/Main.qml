@@ -356,6 +356,37 @@ Rectangle {
         }
     }
 
+    component StepRow: RowLayout {
+        id: stepr
+        property int num: 1
+        property string text: ""
+        Layout.fillWidth: true
+        spacing: Theme.spacing.small
+        Rectangle {
+            Layout.alignment: Qt.AlignTop
+            implicitWidth: 20
+            implicitHeight: 20
+            radius: 10
+            color: Theme.colors.getColor(Theme.palette.primary, 0.16)
+            border.color: Theme.palette.primary
+            border.width: 1
+            LogosText {
+                anchors.centerIn: parent
+                text: stepr.num
+                color: Theme.palette.primary
+                font.pixelSize: 10
+                font.weight: Theme.typography.weightBold
+            }
+        }
+        LogosText {
+            Layout.fillWidth: true
+            text: stepr.text
+            wrapMode: Text.Wrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+        }
+    }
+
     component FieldLabel: LogosText {
         color: Theme.palette.textSecondary
         font.pixelSize: 11
@@ -601,11 +632,20 @@ Rectangle {
             }
 
             // ── the side panel ───────────────────────────────────────
-            ColumnLayout {
+            //
+            // Two columns in one slot, because the tabs want opposite things:
+            // Watch has Live now stretch to the bottom and scroll inside
+            // itself, while Broadcast stacks cards at their natural height and
+            // scrolls the column when they outgrow the window.
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 2
                 Layout.maximumWidth: 400
+
+            ColumnLayout {
+                anchors.fill: parent
+                visible: root.tab === 0
                 spacing: Theme.spacing.large
 
                 // Watch — the key field first, then Live now filling what is
@@ -717,235 +757,256 @@ Rectangle {
                     }
                 }
 
-                // Broadcast
-                Card {
-                    visible: root.tab === 1
-                    title: root.broadcasting ? "You are live" : "Go live"
-                    // The two Broadcast cards split the panel evenly. A
-                    // preferred height of 1 apiece makes the split equal
-                    // whatever the content; the minimum keeps either from
-                    // being squashed below what it needs.
-                    Layout.fillHeight: true
-                    Layout.preferredHeight: 1
-                    Layout.minimumHeight: implicitHeight
+            }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        visible: !root.broadcasting
-                        FieldLabel {
-                            text: "Title"
+            Flickable {
+                anchors.fill: parent
+                visible: root.tab === 1
+                contentHeight: bcColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: LogosScrollBar {}
+
+                ColumnLayout {
+                    id: bcColumn
+                    width: parent.width
+                    spacing: Theme.spacing.large
+
+                        // Broadcast
+                        Card {
+                            visible: root.tab === 1
+                            title: root.broadcasting ? "You are live" : "Go live"
+                            Layout.alignment: Qt.AlignTop
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                visible: !root.broadcasting
+                                FieldLabel {
+                                    text: "Title"
+                                }
+                                LogosTextField {
+                                    id: titleField
+                                    Layout.fillWidth: true
+                                    implicitHeight: 40
+                                    placeholderText: "What are you streaming?"
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: !root.broadcasting
+                                spacing: Theme.spacing.small
+                                LogosSwitch {
+                                    id: listedSwitch
+                                    checked: prefs.listed
+                                    onCheckedChanged: prefs.listed = checked
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 0
+                                    LogosText {
+                                        text: prefs.listed ? "Listed publicly" : "Unlisted"
+                                        color: Theme.palette.text
+                                        font.pixelSize: Theme.typography.secondaryText
+                                        font.weight: Theme.typography.weightMedium
+                                    }
+                                    LogosText {
+                                        Layout.fillWidth: true
+                                        text: prefs.listed
+                                            ? "Anyone running Beacon sees this station in Live now."
+                                            : "Only people you give the key to can find it."
+                                        wrapMode: Text.Wrap
+                                        color: Theme.palette.textTertiary
+                                        font.pixelSize: 11
+                                    }
+                                }
+                            }
+                            ActionButton {
+                                Layout.fillWidth: true
+                                visible: !root.broadcasting
+                                accent: true
+                                text: "Start broadcasting"
+                                onClicked: root.startBroadcast()
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: root.broadcasting
+                                spacing: Theme.spacing.small
+
+                                FieldLabel {
+                                    text: "Send video here"
+                                }
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 40
+                                    radius: Theme.spacing.radiusSmall
+                                    color: Theme.palette.backgroundInset
+                                    border.width: 1
+                                    border.color: Theme.palette.borderHairline
+                                    RowLayout {
+                                        anchors {
+                                            fill: parent
+                                            leftMargin: Theme.spacing.medium
+                                            rightMargin: 6
+                                        }
+                                        Mono {
+                                            Layout.fillWidth: true
+                                            text: root.ingest.url || "—"
+                                            color: Theme.palette.text
+                                            font.pixelSize: 12
+                                            elide: Text.ElideRight
+                                        }
+                                        MiniButton {
+                                            label: root.copied === "ingest" ? "✓" : "Copy"
+                                            onClicked: root.copy(root.ingest.url || "", "ingest")
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: Theme.spacing.small
+                                    implicitHeight: 1
+                                    color: Theme.palette.borderHairline
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Chip {
+                                        label: root.st.listed === false ? "Unlisted" : "Listed"
+                                        tint: root.st.listed === false ? Theme.palette.textSecondary : Theme.palette.primary
+                                        implicitHeight: 22
+                                    }
+                                    Mono {
+                                        text: (root.ingest.bytesIn || 0) > 0 ? "receiving · " + root.human(root.ingest.bytesIn) : "waiting for video…"
+                                        color: (root.ingest.bytesIn || 0) > 0 ? Theme.palette.success : Theme.palette.warning
+                                    }
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+                                    ActionButton {
+                                        danger: true
+                                        text: "Stop"
+                                        onClicked: root.stopBroadcast()
+                                    }
+                                }
+                            }
                         }
-                        LogosTextField {
-                            id: titleField
-                            Layout.fillWidth: true
-                            implicitHeight: 40
-                            placeholderText: "What are you streaming?"
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: !root.broadcasting
-                        spacing: Theme.spacing.small
-                        LogosSwitch {
-                            id: listedSwitch
-                            checked: prefs.listed
-                            onCheckedChanged: prefs.listed = checked
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 0
-                            LogosText {
-                                text: prefs.listed ? "Listed publicly" : "Unlisted"
-                                color: Theme.palette.text
-                                font.pixelSize: Theme.typography.secondaryText
-                                font.weight: Theme.typography.weightMedium
+
+                        Card {
+                            visible: root.tab === 1
+                            title: "Sending video"
+                            Layout.alignment: Qt.AlignTop
+                            StepRow {
+                                num: 1
+                                text: "OBS ▸ Settings ▸ Output, set Output Mode to Advanced."
+                            }
+                            StepRow {
+                                num: 2
+                                text: "Recording tab: Type \"Custom Output (FFmpeg)\", FFmpeg Output Type \"Output to URL\"."
+                            }
+                            StepRow {
+                                num: 3
+                                text: "URL " + (root.ingest.url && root.ingest.url.length ? root.ingest.url : "udp://127.0.0.1:9911") + ", container mpegts, encoders libx264 and aac."
+                            }
+                            StepRow {
+                                num: 4
+                                text: "Press Start Recording — not Start Streaming."
                             }
                             LogosText {
                                 Layout.fillWidth: true
-                                text: prefs.listed
-                                    ? "Anyone running Beacon sees this station in Live now."
-                                    : "Only people you give the key to can find it."
+                                text: "The address never changes, so this is a one-time setup. Anything that speaks MPEG-TS works: ffmpeg, vMix, a phone encoder."
                                 wrapMode: Text.Wrap
                                 color: Theme.palette.textTertiary
                                 font.pixelSize: 11
                             }
                         }
-                    }
-                    ActionButton {
-                        Layout.fillWidth: true
-                        visible: !root.broadcasting
-                        accent: true
-                        text: "Start broadcasting"
-                        onClicked: root.startBroadcast()
-                    }
 
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: root.broadcasting
-                        spacing: Theme.spacing.small
-
-                        FieldLabel {
-                            text: "Send video here"
-                        }
-                        Rectangle {
-                            Layout.fillWidth: true
-                            implicitHeight: 40
-                            radius: Theme.spacing.radiusSmall
-                            color: Theme.palette.backgroundInset
-                            border.width: 1
-                            border.color: Theme.palette.borderHairline
-                            RowLayout {
-                                anchors {
-                                    fill: parent
-                                    leftMargin: Theme.spacing.medium
-                                    rightMargin: 6
-                                }
-                                Mono {
-                                    Layout.fillWidth: true
-                                    text: root.ingest.url || "—"
-                                    color: Theme.palette.text
-                                    font.pixelSize: 12
-                                    elide: Text.ElideRight
-                                }
-                                MiniButton {
-                                    label: root.copied === "ingest" ? "✓" : "Copy"
-                                    onClicked: root.copy(root.ingest.url || "", "ingest")
-                                }
-                            }
-                        }
-                        LogosText {
-                            Layout.fillWidth: true
-                            text: "In OBS: Settings ▸ Output ▸ Output Mode: Advanced ▸ Recording. Type: Custom Output (FFmpeg), FFmpeg Output Type: Output to URL, that address as the URL, container mpegts. Then Start Recording (not Start Streaming)."
-                            wrapMode: Text.Wrap
-                            color: Theme.palette.textTertiary
-                            font.pixelSize: 11
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.topMargin: Theme.spacing.small
-                            implicitHeight: 1
-                            color: Theme.palette.borderHairline
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Chip {
-                                label: root.st.listed === false ? "Unlisted" : "Listed"
-                                tint: root.st.listed === false ? Theme.palette.textSecondary : Theme.palette.primary
-                                implicitHeight: 22
-                            }
+                        Card {
+                            visible: root.tab === 1
+                            title: "Your station key"
+                            Layout.alignment: Qt.AlignTop
                             Mono {
-                                text: (root.ingest.bytesIn || 0) > 0 ? "receiving · " + root.human(root.ingest.bytesIn) : "waiting for video…"
-                                color: (root.ingest.bytesIn || 0) > 0 ? Theme.palette.success : Theme.palette.warning
-                            }
-                            Item {
                                 Layout.fillWidth: true
+                                text: root.station.length ? root.station : "—"
+                                wrapMode: Text.WrapAnywhere
+                                color: Theme.palette.text
                             }
-                            ActionButton {
-                                danger: true
-                                text: "Stop"
-                                onClicked: root.stopBroadcast()
+                            RowLayout {
+                                Layout.fillWidth: true
+                                MiniButton {
+                                    label: root.copied === "station" ? "✓ Copied" : "Copy key"
+                                    onClicked: root.copy(root.station, "station")
+                                }
+                                Item {
+                                    Layout.fillWidth: true
+                                }
                             }
-                        }
-                    }
+                            LogosText {
+                                Layout.fillWidth: true
+                                text: "Share this so people can watch you. It stays the same for this machine; the secret half never leaves it."
+                                wrapMode: Text.Wrap
+                                color: Theme.palette.textTertiary
+                                font.pixelSize: 11
+                            }
 
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: Theme.palette.borderHairline
+                            }
 
-                Card {
-                    visible: root.tab === 1
-                    title: "Your station key"
-                    Layout.fillHeight: true
-                    Layout.preferredHeight: 1
-                    Layout.minimumHeight: implicitHeight
-                    Mono {
-                        Layout.fillWidth: true
-                        text: root.station.length ? root.station : "—"
-                        wrapMode: Text.WrapAnywhere
-                        color: Theme.palette.text
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        MiniButton {
-                            label: root.copied === "station" ? "✓ Copied" : "Copy key"
-                            onClicked: root.copy(root.station, "station")
-                        }
-                        Item {
-                            Layout.fillWidth: true
-                        }
-                    }
-                    LogosText {
-                        Layout.fillWidth: true
-                        text: "Share this so people can watch you. It stays the same for this machine; the secret half never leaves it."
-                        wrapMode: Text.Wrap
-                        color: Theme.palette.textTertiary
-                        font.pixelSize: 11
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: 1
-                        color: Theme.palette.borderHairline
-                    }
-
-                    MiniButton {
-                        label: root.showKeyTools ? "Hide backup" : "Back up or restore this station"
-                        onClicked: root.showKeyTools = !root.showKeyTools
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: root.showKeyTools
-                        spacing: Theme.spacing.small
-
-                        NoticeBanner {
-                            tint: Theme.palette.warning
-                            text: "A backup is the station itself. Anyone who holds it can broadcast as you, and a key cannot be revoked. Keep it somewhere private, and lose it and your audience's key is dead."
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
                             MiniButton {
-                                label: root.copied === "backup" ? "✓ Copied to clipboard" : "Copy backup"
-                                onClicked: root.exportStation(function (hex) {
-                                    if (hex.length)
-                                        root.copy(hex, "backup");
-                                    else
-                                        root.lastError = "No station key to back up.";
-                                })
+                                label: root.showKeyTools ? "Hide backup" : "Back up or restore this station"
+                                onClicked: root.showKeyTools = !root.showKeyTools
                             }
-                            Item {
+
+                            ColumnLayout {
                                 Layout.fillWidth: true
+                                visible: root.showKeyTools
+                                spacing: Theme.spacing.small
+
+                                NoticeBanner {
+                                    tint: Theme.palette.warning
+                                    text: "A backup is the station itself. Anyone who holds it can broadcast as you, and a key cannot be revoked. Keep it somewhere private, and lose it and your audience's key is dead."
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    MiniButton {
+                                        label: root.copied === "backup" ? "✓ Copied to clipboard" : "Copy backup"
+                                        onClicked: root.exportStation(function (hex) {
+                                            if (hex.length)
+                                                root.copy(hex, "backup");
+                                            else
+                                                root.lastError = "No station key to back up.";
+                                        })
+                                    }
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                                FieldLabel {
+                                    text: "Restore"
+                                }
+                                LogosTextField {
+                                    id: importField
+                                    Layout.fillWidth: true
+                                    implicitHeight: 40
+                                    placeholderText: "Paste a backup (128 hex characters)"
+                                }
+                                ActionButton {
+                                    Layout.fillWidth: true
+                                    text: "Replace this station"
+                                    danger: true
+                                    enabled: importField.text.trim().length === 128 && !root.broadcasting
+                                    onClicked: root.importStation(importField.text)
+                                }
                             }
                         }
-                        FieldLabel {
-                            text: "Restore"
-                        }
-                        LogosTextField {
-                            id: importField
-                            Layout.fillWidth: true
-                            implicitHeight: 40
-                            placeholderText: "Paste a backup (128 hex characters)"
-                        }
-                        ActionButton {
-                            Layout.fillWidth: true
-                            text: "Replace this station"
-                            danger: true
-                            enabled: importField.text.trim().length === 128 && !root.broadcasting
-                            onClicked: root.importStation(importField.text)
-                        }
-                    }
 
-                    Item {
-                        Layout.fillHeight: true
-                    }
                 }
-
-                // No spacer: on Watch, Live now takes the remaining height;
-                // on Broadcast, the two cards share it between them.
+            }
             }
         }
     }
