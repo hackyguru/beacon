@@ -760,9 +760,10 @@ Rectangle {
             }
 
             Flickable {
+                id: bcFlick
                 anchors.fill: parent
                 visible: root.tab === 1
-                contentHeight: bcColumn.implicitHeight
+                contentHeight: bcColumn.height
                 clip: true
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: LogosScrollBar {}
@@ -770,6 +771,10 @@ Rectangle {
                 ColumnLayout {
                     id: bcColumn
                     width: parent.width
+                    // At least as tall as the panel, so the last card can reach
+                    // the bottom; taller when the cards need it, and then the
+                    // column scrolls.
+                    height: Math.max(implicitHeight, bcFlick.height)
                     spacing: Theme.spacing.large
 
                         // Broadcast
@@ -926,7 +931,10 @@ Rectangle {
                         Card {
                             visible: root.tab === 1
                             title: "Your station key"
-                            Layout.alignment: Qt.AlignTop
+                            // Takes whatever height is left, so the column ends
+                            // flush with the video beside it.
+                            Layout.fillHeight: true
+                            Layout.minimumHeight: implicitHeight
                             Mono {
                                 Layout.fillWidth: true
                                 text: root.station.length ? root.station : "—"
@@ -1002,6 +1010,12 @@ Rectangle {
                                     enabled: importField.text.trim().length === 128 && !root.broadcasting
                                     onClicked: root.importStation(importField.text)
                                 }
+                            }
+
+                            // The card stretches to the bottom of the panel;
+                            // the slack belongs here, not spread between rows.
+                            Item {
+                                Layout.fillHeight: true
                             }
                         }
 
