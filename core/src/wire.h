@@ -26,18 +26,28 @@ namespace beacon {
  */
 namespace wire {
 
-constexpr uint8_t  kMagic[4]   = { 'B', 'C', 'N', '1' };
+constexpr uint8_t  kMagic[4]   = { 'B', 'C', 'N', '2' };
 constexpr uint8_t  kKindMedia  = 1;
 constexpr size_t   kPubKeyLen  = 32;
 constexpr size_t   kSigLen     = 64;
 constexpr size_t   kHeaderLen  = 4 + 1 + kPubKeyLen + 8 + 8 + kSigLen;   // 117
 
-/** Bytes that the signature covers: seq, sentMs and the payload. */
-inline std::vector<uint8_t> signedRegion(uint64_t seq, int64_t sentMs,
-                                         const uint8_t* payload, size_t len)
+/**
+ * Bytes the signature covers: the topic, the sequence number, the timestamp
+ * and the payload.
+ *
+ * The topic is in there so a fragment cannot be lifted onto another station's
+ * topic, and the timestamp so a viewer can refuse yesterday's broadcast being
+ * replayed as today's. Both are pointless unless signed, which is why the
+ * format carries a version: BCN2 fragments are not BCN1 fragments.
+ */
+inline std::vector<uint8_t> signedRegion(const std::string& topic, uint64_t seq,
+                                         int64_t sentMs, const uint8_t* payload, size_t len)
 {
     std::vector<uint8_t> out;
-    out.reserve(16 + len);
+    out.reserve(topic.size() + 17 + len);
+    out.insert(out.end(), topic.begin(), topic.end());
+    out.push_back(0);
     for (int i = 0; i < 8; ++i) out.push_back(static_cast<uint8_t>((seq >> (8 * i)) & 0xff));
     for (int i = 0; i < 8; ++i) out.push_back(static_cast<uint8_t>((static_cast<uint64_t>(sentMs) >> (8 * i)) & 0xff));
     out.insert(out.end(), payload, payload + len);

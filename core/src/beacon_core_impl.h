@@ -46,8 +46,12 @@ public:
     /// Bring the delivery node up and subscribe to the station directory.
     StdLogosResult startNetwork();
 
-    /// Start broadcasting: opens the ingest port and announces the station.
-    StdLogosResult startBroadcast(const std::string& title);
+    /**
+     * Start broadcasting: opens the ingest port.
+     * `listed` false keeps the station out of the public directory, so the only
+     * way to find it is a key you handed out yourself.
+     */
+    StdLogosResult startBroadcast(const std::string& title, bool listed);
     StdLogosResult stopBroadcast();
 
     /// Watch a station by its 64-character public key.
@@ -59,6 +63,12 @@ public:
 
     /// This machine's own station key, in hex.
     std::string stationKey();
+
+    /// The whole keypair, for backup. Treat it as the station itself.
+    std::string exportStation();
+
+    /// Replace this machine's station with a backed-up one.
+    StdLogosResult importStation(const std::string& secretHex);
 
 protected:
     void onContextReady() override;
@@ -75,6 +85,8 @@ private:
     void flushLocked();                 // publish the pending fragment
     void pumpLoop();                    // flush on a timer, announce, prune
     static std::string mediaTopic(const std::string& stationHex);
+    void reserveSequence(uint64_t upTo);   // persist the sequence high-water mark
+    std::string keyDir() const;
 
     std::unique_ptr<beacon::HttpServer>   m_http;
     std::unique_ptr<beacon::StreamBuffer> m_buffer;
@@ -91,10 +103,16 @@ private:
     int         m_netStatus    = 0;      // 0 off · 1 connecting · 2 connected · 3 error
     std::string m_netError;
     std::string m_lastError;
+    std::string m_keyDir;
 
     bool        m_broadcasting = false;
+    bool        m_listed       = true;
     std::string m_title;
+    // Never restarts, and survives a restart of the app. A sequence that began
+    // again at zero let an attacker replay fragments from a longer past
+    // broadcast whose numbers ran ahead of the live ones.
     uint64_t    m_seq          = 0;
+    uint64_t    m_seqReserved  = 0;
     std::vector<uint8_t> m_pendingFragment;
     int64_t     m_lastFlushMs  = 0;
     int64_t     m_lastAnnounceMs = 0;
@@ -105,6 +123,7 @@ private:
     uint8_t     m_watchKey[32]{};
     std::string m_watchTopic;
     uint64_t    m_rejected     = 0;      // fragments that failed verification
+    uint64_t    m_stale        = 0;      // fragments too old to be this broadcast
 
     std::map<std::string, Listing> m_directory;
 

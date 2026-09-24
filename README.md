@@ -50,10 +50,10 @@ A station's public key is its address. The broadcaster publishes to `/beacon/1/<
 | --- | --- |
 | **Ingest** | Your software pushes MPEG-TS at a loopback UDP port. Local only: a cloud studio cannot reach it, and neither can anyone else |
 | **Fragments** | The stream is cut into 8 KiB slices — 44 transport packets — each signed with ed25519 and published. About 13 a second at 700 kbit/s |
-| **Signature** | Over the sequence number, the timestamp and the payload. A fragment from any other key is dropped and counted |
+| **Signature** | Over the topic, the sequence number, the timestamp and the payload. A fragment from another key, lifted onto another topic, or older than 30 seconds is dropped and counted |
 | **Reordering** | Gossipsub delivers out of order, so fragments are held briefly in sequence. Once the window fills, the gap is conceded and playback continues |
 | **Playback** | The viewer serves the reassembled stream on loopback HTTP, and the WebView Basecamp bundles decodes and renders it with mpegts.js |
-| **Discovery** | A live station announces itself every three seconds on a shared directory topic. No registry, no server |
+| **Discovery** | A live station announces itself every three seconds on a shared directory topic, signed by its own key. No registry, no server. A broadcast can be unlisted, and then only a key you handed out finds it |
 
 **Why MPEG-TS and not RTMP or MP4.** A transport stream can be cut anywhere, repeats its own headers, and survives losing a piece — a viewer arriving mid-broadcast starts at the next keyframe with nothing negotiated. That is what lets Beacon be a pure transport: no demuxer, no muxer, no codec, and a lost fragment costs a glitch rather than the rest of the stream.
 
@@ -99,6 +99,7 @@ ffmpeg -re -f avfoundation -i "1:0" \
 | `nix build --override-input beacon_core path:../core '.#lgx-portable'` in `ui/` | Build the UI against your local core |
 | `./install.sh` | Install both into Basecamp |
 | `curl 127.0.0.1:<port>/stats` | The core's own state as JSON, without the UI |
+| `core/tests/run.sh` | Offline checks on identity, replay and reordering |
 
 **Environment**
 
@@ -143,7 +144,8 @@ Version 0.1.0. Measured on one machine, two Basecamp instances, ffmpeg standing 
 
 The honest gaps:
 
-- **No encryption.** The topic is public and so is the stream.
+- **No encryption.** The topic is public and so is the stream. Listing a station publishes its key, so a private broadcast must be unlisted — which is obscurity, not privacy.
+- **A key cannot be revoked.** Back it up (Broadcast ▸ Back up or restore) and keep the backup private: whoever holds it can broadcast as you.
 - **Viewers are not anonymous** to the mesh they subscribe through.
 - **Bandwidth is the real ceiling.** Gossipsub fan-out means viewers upload as well as download; expect 360p–480p to work and 1080p60 not to.
 - **One viewer per instance.** The reassembled stream has a single consumer, so the newest player wins.

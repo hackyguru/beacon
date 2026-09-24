@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <chrono>
+#include <fstream>
 #include <cstdlib>
 #include <sstream>
 
@@ -25,6 +26,11 @@ constexpr size_t  kFragmentBytes  = 188 * 44;
 constexpr int64_t kFlushMs        = 120;     // ship a partial fragment rather than sit on it
 constexpr int64_t kAnnounceMs     = 3000;    // how often a live station says it exists
 constexpr int64_t kListingTtlMs   = 12000;   // a station unheard from this long is gone
+// A fragment older than this is not this broadcast — it is a recording of an
+// earlier one being replayed. Generous enough to survive clock skew between
+// two machines that have never spoken.
+constexpr int64_t kMaxAgeMs       = 30000;
+constexpr uint64_t kSeqReserve    = 10000;   // sequence numbers claimed per write
 
 int64_t nowMs()
 {
@@ -62,6 +68,7 @@ void BeaconCoreImpl::onContextReady()
         const char* portEnv = std::getenv("BEACON_TCPPORT");
         const std::string keyDir = portEnv && *portEnv ? (dir + "/" + portEnv) : dir;
         if (keyDir != dir) ::mkdir(keyDir.c_str(), 0700);
+        m_keyDir = keyDir;
         if (!m_station.loadOrCreate(keyDir, err)) {
             std::lock_guard<std::mutex> lk(m_mu);
             m_lastError = err;
@@ -70,6 +77,15 @@ void BeaconCoreImpl::onContextReady()
         // No persistence (tests, or a host that provisions none): a station that
         // lasts as long as the process is better than none at all.
         m_station.createEphemeral();
+    }
+
+    // Pick up where the sequence left off, and claim a block ahead so a crash
+    // cannot hand the same numbers out twice.
+    if (!m_keyDir.empty()) {
+        std::ifstream seqIn(m_keyDir + "/seq");
+        uint64_t stored = 0;
+        if (seqIn >> stored) m_seq = stored;
+        reserveSequence(m_seq + kSeqReserve);
     }
 
     m_http->setSource(m_buffer.get());
@@ -92,9 +108,50 @@ void BeaconCoreImpl::onContextReady()
             // lands, and the node takes a few seconds to find peers.
             std::this_thread::sleep_for(std::chrono::seconds(3));
             if (!station.empty()) watch(station);
-            else                  startBroadcast(title);
+            else                  startBroadcast(title, true);
         }).detach();
     }
+}
+
+std::string BeaconCoreImpl::keyDir() const
+{
+    return m_keyDir;
+}
+
+void BeaconCoreImpl::reserveSequence(uint64_t upTo)
+{
+    if (m_keyDir.empty()) return;
+    m_seqReserved = upTo;
+    std::ofstream out(m_keyDir + "/seq", std::ios::trunc);
+    if (out) out << upTo;
+}
+
+std::string BeaconCoreImpl::exportStation()
+{
+    return m_station.exportSecretHex();
+}
+
+StdLogosResult BeaconCoreImpl::importStation(const std::string& secretHex)
+{
+    if (m_keyDir.empty())
+        return {false, {}, "no writable data directory"};
+    if (m_broadcasting)
+        return {false, {}, "stop broadcasting first"};
+
+    std::string err;
+    if (!m_station.importSecretHex(m_keyDir, secretHex, err)) {
+        std::lock_guard<std::mutex> lk(m_mu);
+        m_lastError = err;
+        return {false, {}, err};
+    }
+    // A different station starts its own sequence, and must not reuse numbers
+    // the imported key may already have published elsewhere.
+    {
+        std::lock_guard<std::mutex> lk(m_mu);
+        m_seq = 0;
+    }
+    reserveSequence(kSeqReserve);
+    return {true, m_station.publicKeyHex()};
 }
 
 std::string BeaconCoreImpl::stationKey()
@@ -209,7 +266,7 @@ StdLogosResult BeaconCoreImpl::startNetwork()
 
 // ── broadcasting ─────────────────────────────────────────────────────────
 
-StdLogosResult BeaconCoreImpl::startBroadcast(const std::string& title)
+StdLogosResult BeaconCoreImpl::startBroadcast(const std::string& title, bool listed)
 {
     if (!m_station.valid())
         return {false, {}, "no station key"};
@@ -220,8 +277,8 @@ StdLogosResult BeaconCoreImpl::startBroadcast(const std::string& title)
     {
         std::lock_guard<std::mutex> lk(m_mu);
         if (m_broadcasting) return {true, m_ingest->url()};
-        m_title = title.empty() ? ("Station " + m_station.shortId()) : title;
-        m_seq   = 0;
+        m_title  = title.empty() ? ("Station " + m_station.shortId()) : title;
+        m_listed = listed;
         m_published = m_publishedBytes = 0;
         m_pendingFragment.clear();
     }
@@ -289,7 +346,8 @@ void BeaconCoreImpl::flushLocked()
 
     const uint64_t seq    = m_seq++;
     const int64_t  sentMs = nowMs();
-    const auto     signed_ = beacon::wire::signedRegion(seq, sentMs, payload.data(), payload.size());
+    const std::string topic = mediaTopic(m_station.publicKeyHex());
+    const auto     signed_ = beacon::wire::signedRegion(topic, seq, sentMs, payload.data(), payload.size());
     const auto     sig     = m_station.sign(signed_);
     if (sig.size() != beacon::wire::kSigLen) {
         m_lastError = "signing failed";
@@ -298,7 +356,7 @@ void BeaconCoreImpl::flushLocked()
 
     const auto packet = beacon::wire::encode(m_station.publicKey(), seq, sentMs,
                                              sig.data(), payload.data(), payload.size());
-    const std::string topic = mediaTopic(m_station.publicKeyHex());
+    if (seq + 1 >= m_seqReserved) reserveSequence(seq + 1 + kSeqReserve);
 
     m_published++;
     m_publishedBytes += payload.size();
@@ -374,6 +432,21 @@ void BeaconCoreImpl::onMessage(const std::string& topic, const std::vector<uint8
             std::string title = j.value("title", "");
             if (title.size() > 120) title = title.substr(0, 120);
 
+            // An announcement must be signed by the key it claims, or anyone
+            // could list someone else's station under a title of their
+            // choosing. It still cannot stop a stranger listing their OWN key
+            // under your name — only a key you were given directly can.
+            uint8_t claimed[32];
+            if (!beacon::Station::hexToKey(station, claimed)) return;
+            const std::string sigHex = j.value("sig", "");
+            if (sigHex.size() != beacon::wire::kSigLen * 2) return;
+            std::vector<uint8_t> sig(beacon::wire::kSigLen);
+            for (size_t i = 0; i < sig.size(); ++i)
+                sig[i] = static_cast<uint8_t>(std::strtoul(sigHex.substr(i * 2, 2).c_str(), nullptr, 16));
+            const std::string body = station + "|" + title + "|" + std::to_string(j.value("ts", int64_t{0}));
+            const std::vector<uint8_t> signedBody(body.begin(), body.end());
+            if (!beacon::Station::verify(claimed, sig, signedBody)) return;
+
             std::lock_guard<std::mutex> lk(m_mu);
             auto& listing = m_directory[station];
             listing.title      = title;
@@ -402,11 +475,20 @@ void BeaconCoreImpl::onMessage(const std::string& topic, const std::vector<uint8
         ++m_rejected;
         return;
     }
-    const auto signed_ = beacon::wire::signedRegion(pkt.seq, pkt.sentMs,
+    const auto signed_ = beacon::wire::signedRegion(topic, pkt.seq, pkt.sentMs,
                                                     pkt.payload.data(), pkt.payload.size());
     if (!beacon::Station::verify(key, pkt.sig, signed_)) {
         std::lock_guard<std::mutex> lk(m_mu);
         ++m_rejected;
+        return;
+    }
+
+    // Signed, by the right key, for the right topic — and yet possibly a
+    // recording of a broadcast that ended last week, replayed to look live.
+    const int64_t age = nowMs() - pkt.sentMs;
+    if (age > kMaxAgeMs || age < -kMaxAgeMs) {
+        std::lock_guard<std::mutex> lk(m_mu);
+        ++m_stale;
         return;
     }
 
@@ -430,12 +512,15 @@ void BeaconCoreImpl::pumpLoop()
             if (m_broadcasting && !m_pendingFragment.empty() && now - m_lastFlushMs >= kFlushMs)
                 flushLocked();
 
-            if (m_broadcasting && now - m_lastAnnounceMs >= kAnnounceMs) {
+            if (m_broadcasting && m_listed && now - m_lastAnnounceMs >= kAnnounceMs) {
                 m_lastAnnounceMs = now;
+                const std::string body = m_station.publicKeyHex() + "|" + m_title + "|" + std::to_string(now);
+                const std::vector<uint8_t> toSign(body.begin(), body.end());
                 json a;
                 a["station"] = m_station.publicKeyHex();
                 a["title"]   = m_title;
                 a["ts"]      = now;
+                a["sig"]     = beacon::Station::toHex(m_station.sign(toSign).data(), beacon::wire::kSigLen);
                 announce = a.dump();
             }
 
@@ -481,6 +566,9 @@ std::string BeaconCoreImpl::state()
         st["published"]   = m_published;
         st["publishedBytes"] = m_publishedBytes;
         st["rejected"]    = m_rejected;
+        st["stale"]       = m_stale;
+        st["listed"]      = m_listed;
+        st["seq"]         = m_seq;
 
         json dir = json::array();
         for (const auto& kv : m_directory) {

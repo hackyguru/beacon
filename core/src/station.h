@@ -36,6 +36,16 @@ public:
     static bool verify(const uint8_t* pubkey, const std::vector<uint8_t>& sig,
                        const std::vector<uint8_t>& data);
 
+    /**
+     * The whole keypair as hex, for backing a station up or moving it to
+     * another machine. This IS the station: anyone holding it can broadcast as
+     * you, and there is no revocation.
+     */
+    std::string exportSecretHex() const;
+
+    /** Replaces the stored keypair with an exported one. */
+    bool importSecretHex(const std::string& dir, const std::string& hex, std::string& error);
+
     /** 64 hex characters to raw bytes; false if malformed. */
     static bool hexToKey(const std::string& hex, uint8_t out[32]);
     static std::string toHex(const uint8_t* bytes, size_t len);

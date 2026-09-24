@@ -47,7 +47,9 @@ Rectangle {
         category: "beacon"
         property string title: ""
         property string lastStation: ""
+        property bool listed: true
     }
+    property bool showKeyTools: false
 
     // ── bridge ───────────────────────────────────────────────────────
     function call(method, args, cb) {
@@ -101,7 +103,19 @@ Rectangle {
     function startBroadcast() {
         lastError = "";
         prefs.title = titleField.text;
-        call("startBroadcast", [titleField.text]);
+        call("startBroadcast", [titleField.text, prefs.listed]);
+    }
+    function exportStation(cb) {
+        call2("exportStation", function (hex) {
+            cb(typeof hex === "string" ? hex : "");
+        });
+    }
+    function importStation(hex) {
+        lastError = "";
+        call("importStation", [hex.trim()], function (r) {
+            if (r && r.success !== false)
+                importField.text = "";
+        });
     }
     function stopBroadcast() {
         call("stopBroadcast", []);
@@ -293,6 +307,52 @@ Rectangle {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
             onClicked: mb.clicked()
+        }
+    }
+
+    component Chip: Rectangle {
+        id: chip
+        property string label: ""
+        property color tint: Theme.palette.primary
+        radius: Theme.spacing.radiusPill
+        color: Theme.colors.getColor(chip.tint, 0.13)
+        border.width: 1
+        border.color: Theme.colors.getColor(chip.tint, 0.45)
+        implicitHeight: 26
+        implicitWidth: chipLabel.implicitWidth + 22
+        LogosText {
+            id: chipLabel
+            anchors.centerIn: parent
+            text: chip.label
+            font.pixelSize: 11
+            font.weight: Theme.typography.weightMedium
+            color: chip.tint
+        }
+    }
+
+    component NoticeBanner: Rectangle {
+        id: nb
+        property color tint: Theme.palette.info
+        property string text: ""
+        Layout.fillWidth: true
+        color: Theme.colors.getColor(nb.tint, 0.10)
+        border.color: Theme.colors.getColor(nb.tint, 0.40)
+        border.width: 1
+        radius: Theme.spacing.radiusMedium
+        implicitHeight: nbText.implicitHeight + Theme.spacing.medium * 2
+        LogosText {
+            id: nbText
+            anchors {
+                left: parent.left
+                right: parent.right
+                verticalCenter: parent.verticalCenter
+                leftMargin: Theme.spacing.medium
+                rightMargin: Theme.spacing.medium
+            }
+            text: nb.text
+            wrapMode: Text.Wrap
+            color: Theme.palette.text
+            font.pixelSize: Theme.typography.secondaryText
         }
     }
 
@@ -673,6 +733,35 @@ Rectangle {
                             placeholderText: "What are you streaming?"
                         }
                     }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: !root.broadcasting
+                        spacing: Theme.spacing.small
+                        LogosSwitch {
+                            id: listedSwitch
+                            checked: prefs.listed
+                            onCheckedChanged: prefs.listed = checked
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            LogosText {
+                                text: prefs.listed ? "Listed publicly" : "Unlisted"
+                                color: Theme.palette.text
+                                font.pixelSize: Theme.typography.secondaryText
+                                font.weight: Theme.typography.weightMedium
+                            }
+                            LogosText {
+                                Layout.fillWidth: true
+                                text: prefs.listed
+                                    ? "Anyone running Beacon sees this station in Live now."
+                                    : "Only people you give the key to can find it."
+                                wrapMode: Text.Wrap
+                                color: Theme.palette.textTertiary
+                                font.pixelSize: 11
+                            }
+                        }
+                    }
                     ActionButton {
                         Layout.fillWidth: true
                         visible: !root.broadcasting
@@ -732,6 +821,11 @@ Rectangle {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            Chip {
+                                label: root.st.listed === false ? "Unlisted" : "Listed"
+                                tint: root.st.listed === false ? Theme.palette.textSecondary : Theme.palette.primary
+                                implicitHeight: 22
+                            }
                             Mono {
                                 text: (root.ingest.bytesIn || 0) > 0 ? "receiving · " + root.human(root.ingest.bytesIn) : "waiting for video…"
                                 color: (root.ingest.bytesIn || 0) > 0 ? Theme.palette.success : Theme.palette.warning
@@ -774,6 +868,59 @@ Rectangle {
                         wrapMode: Text.Wrap
                         color: Theme.palette.textTertiary
                         font.pixelSize: 11
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: 1
+                        color: Theme.palette.borderHairline
+                    }
+
+                    MiniButton {
+                        label: root.showKeyTools ? "Hide backup" : "Back up or restore this station"
+                        onClicked: root.showKeyTools = !root.showKeyTools
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: root.showKeyTools
+                        spacing: Theme.spacing.small
+
+                        NoticeBanner {
+                            tint: Theme.palette.warning
+                            text: "A backup is the station itself. Anyone who holds it can broadcast as you, and a key cannot be revoked. Keep it somewhere private, and lose it and your audience's key is dead."
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            MiniButton {
+                                label: root.copied === "backup" ? "✓ Copied to clipboard" : "Copy backup"
+                                onClicked: root.exportStation(function (hex) {
+                                    if (hex.length)
+                                        root.copy(hex, "backup");
+                                    else
+                                        root.lastError = "No station key to back up.";
+                                })
+                            }
+                            Item {
+                                Layout.fillWidth: true
+                            }
+                        }
+                        FieldLabel {
+                            text: "Restore"
+                        }
+                        LogosTextField {
+                            id: importField
+                            Layout.fillWidth: true
+                            implicitHeight: 40
+                            placeholderText: "Paste a backup (128 hex characters)"
+                        }
+                        ActionButton {
+                            Layout.fillWidth: true
+                            text: "Replace this station"
+                            danger: true
+                            enabled: importField.text.trim().length === 128 && !root.broadcasting
+                            onClicked: root.importStation(importField.text)
+                        }
                     }
                 }
 
