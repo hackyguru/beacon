@@ -95,6 +95,16 @@ void BeaconCoreImpl::onContextReady()
     m_pumping = true;
     m_pump    = std::thread([this] { pumpLoop(); });
 
+    // Bring the node up without being asked. Nobody opening a streaming app
+    // wants to learn that a delivery node exists, and the directory only fills
+    // once we are subscribed to it, so Live now would be empty until the user
+    // did something. Off the init path: the dependency is not necessarily ready
+    // the moment the context lands.
+    std::thread([this] {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        startNetwork();
+    }).detach();
+
     // Test hooks. Two Basecamps on one machine share a process name and the
     // accessibility layer cannot tell them apart, so driving both UIs from a
     // script does not work; these let a run be scripted end to end.
@@ -529,6 +539,17 @@ void BeaconCoreImpl::pumpLoop()
                 else ++it;
             }
         }
+
+        // A node that failed to start (the dependency was not ready, a port was
+        // busy) should not leave the app offline until someone presses
+        // something. Try again, quietly, every 15 seconds.
+        bool needsNode = false;
+        {
+            std::lock_guard<std::mutex> lk(m_mu);
+            needsNode = !m_started && (now - m_lastNetTryMs >= 15000);
+            if (needsNode) m_lastNetTryMs = now;
+        }
+        if (needsNode) startNetwork();
 
         // Everything that goes on the wire is sent from here, with no lock held.
         std::deque<std::pair<std::string, std::vector<uint8_t>>> outbox;

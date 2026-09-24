@@ -53,6 +53,7 @@ A station's public key is its address. The broadcaster publishes to `/beacon/1/<
 | **Signature** | Over the topic, the sequence number, the timestamp and the payload. A fragment from another key, lifted onto another topic, or older than 30 seconds is dropped and counted |
 | **Reordering** | Gossipsub delivers out of order, so fragments are held briefly in sequence. Once the window fills, the gap is conceded and playback continues |
 | **Playback** | The viewer serves the reassembled stream on loopback HTTP, and the WebView Basecamp bundles decodes and renders it with mpegts.js |
+| **The node** | Starts on its own when Beacon opens, and retries if it cannot. Nobody opening a streaming app should have to know a delivery node exists |
 | **Discovery** | A live station announces itself every three seconds on a shared directory topic, signed by its own key. No registry, no server. A broadcast can be unlisted, and then only a key you handed out finds it |
 
 **Why MPEG-TS and not RTMP or MP4.** A transport stream can be cut anywhere, repeats its own headers, and survives losing a piece — a viewer arriving mid-broadcast starts at the next keyframe with nothing negotiated. That is what lets Beacon be a pure transport: no demuxer, no muxer, no codec, and a lost fragment costs a glitch rather than the rest of the stream.

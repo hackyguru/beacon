@@ -101,6 +101,7 @@ private:
     bool        m_started      = false;
     bool        m_eventsWired  = false;
     int         m_netStatus    = 0;      // 0 off · 1 connecting · 2 connected · 3 error
+    int64_t     m_lastNetTryMs = 0;      // last automatic attempt to bring the node up
     std::string m_netError;
     std::string m_lastError;
     std::string m_keyDir;
