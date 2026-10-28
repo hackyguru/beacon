@@ -119,6 +119,12 @@ BEACON_TCPPORT=60001 open -n /Applications/LogosBasecamp.app
 
 **The network.** The logos.dev fleet moved to cluster 3 while `delivery_module` 0.2.0's preset still says 2, so the core sets `clusterId` explicitly. Drop that once the module ships the new preset.
 
+**The node's identity.** Each install makes its own delivery node key on first use and keeps it as `node.key` beside the station key. Only the second test instance keeps a fixed key, so the first can dial it by peer id. The fleet holds one connection per peer id, so a key shared by every install meant whoever connected first was the only one who could.
+
+**Store backfill is still on.** `delivery_module` 0.3.x fetches a topic's recent history from Store on subscribe unless told not to; for a live stream that is megabytes of fragments the viewer discards as too old (they show up as `stale` in `/stats`). Turning it off needs `messagingOverrides.backfillEnabled = false`, which only the layered config shape accepts — and that shape rejects the flat node keys the core sends today. To do.
+
+**delivery_module 0.4.0** aborts its whole host if `start()` is called twice, where 0.2.0 only warned — so `startNetwork` runs one caller at a time. Basecamp then respawns the module, but the respawned node is a default one on the preset's cluster, with a fresh key and a random port, not the one Beacon asked for.
+
 ## Repository map
 
 | Path | What it is |

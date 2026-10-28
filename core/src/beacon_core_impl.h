@@ -87,6 +87,7 @@ private:
     static std::string mediaTopic(const std::string& stationHex);
     void reserveSequence(uint64_t upTo);   // persist the sequence high-water mark
     std::string keyDir() const;
+    std::string nodeKeyHex();              // this install's delivery node key, made on first use
 
     std::unique_ptr<beacon::HttpServer>   m_http;
     std::unique_ptr<beacon::StreamBuffer> m_buffer;
@@ -97,6 +98,7 @@ private:
     std::atomic<bool> m_pumping{false};
 
     mutable std::mutex m_mu;
+    std::mutex  m_netMu;                 // serialises startNetwork end to end
     bool        m_nodeCreated  = false;
     bool        m_started      = false;
     bool        m_eventsWired  = false;

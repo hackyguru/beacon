@@ -4,6 +4,7 @@
 #include "wire.h"
 
 #include <nlohmann/json.hpp>
+#include <sodium.h>
 
 #include <sys/stat.h>
 
@@ -181,9 +182,12 @@ void BeaconCoreImpl::wireDeliveryEvents()
     if (m_eventsWired) return;
     m_eventsWired = true;
 
+    // delivery_module 0.3.x: (messageHash, contentTopic, payload, source, timestamp).
+    // `source` says whether the message is live or Store catch-up; a fragment's
+    // own timestamp already decides whether it is too old to play.
     modules().delivery_module.onMessageReceived(
         [this](const std::string&, const std::string& contentTopic,
-               const std::vector<uint8_t>& payload, int64_t) {
+               const std::vector<uint8_t>& payload, const std::string&, int64_t) {
             onMessage(contentTopic, payload);
         });
 
@@ -194,8 +198,40 @@ void BeaconCoreImpl::wireDeliveryEvents()
         });
 }
 
+std::string BeaconCoreImpl::nodeKeyHex()
+{
+    // Made once and kept beside the station key, so the node is the same peer
+    // across restarts. Without persistence (tests), a fresh one per process.
+    const std::string path = m_keyDir.empty() ? std::string() : m_keyDir + "/node.key";
+    if (!path.empty()) {
+        std::ifstream in(path);
+        std::string hex;
+        if (in >> hex && hex.size() == 64) return hex;
+    }
+    uint8_t raw[32];
+    randombytes_buf(raw, sizeof raw);
+    static const char* digits = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(64);
+    for (uint8_t b : raw) {
+        hex.push_back(digits[b >> 4]);
+        hex.push_back(digits[b & 0x0f]);
+    }
+    if (!path.empty()) {
+        std::ofstream out(path, std::ios::trunc);
+        out << hex;
+        out.close();
+        ::chmod(path.c_str(), 0600);
+    }
+    return hex;
+}
+
 StdLogosResult BeaconCoreImpl::startNetwork()
 {
+    // One caller at a time. The load hook and the pump's retry both arrive
+    // while createNode is still running, and delivery_module 0.4.0 aborts the
+    // whole host on a second start() where 0.2.0 only warned.
+    std::lock_guard<std::mutex> netLk(m_netMu);
     {
         std::lock_guard<std::mutex> lk(m_mu);
         if (m_started) return {true, "already running"};
@@ -213,7 +249,6 @@ StdLogosResult BeaconCoreImpl::startNetwork()
         const int tcpPort = isB ? customPort : 60000;
         const int udpPort = isB ? 9000 + (tcpPort - 60000) : 9000;
 
-        static const char* KEY_A = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
         static const char* KEY_B = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f21";
         static const char* PEERID_A = "16Uiu2HAm4Ms862Gnqafssgvik4JJ1LuqWMcKNipq4nm2UaoLRbeP";
         static const char* PEERID_B = "16Uiu2HAmKCaJ7sfcm1aHY8TAShdsKttUHvDwTPbgTkJhLQu8AMiG";
@@ -221,6 +256,13 @@ StdLogosResult BeaconCoreImpl::startNetwork()
         std::ostringstream peer;
         peer << "/ip4/127.0.0.1/tcp/" << (isB ? 60000 : 60001) << "/p2p/"
              << (isB ? PEERID_A : PEERID_B);
+
+        // The node's own identity. The second test instance keeps the fixed
+        // key so the first can dial it by peer id; everything else gets a key
+        // of its own. A key every install shares cannot be on the network
+        // twice: the fleet keeps one connection per peer id, and whoever
+        // connected first wins — the second install is dropped mid-handshake.
+        const std::string nodeKey = isB ? KEY_B : nodeKeyHex();
 
         json cfg;
         cfg["logLevel"]      = "INFO";
@@ -233,8 +275,16 @@ StdLogosResult BeaconCoreImpl::startNetwork()
         cfg["relay"]         = true;
         cfg["tcpPort"]       = tcpPort;
         cfg["discv5UdpPort"] = udpPort;
-        cfg["nodeKey"]       = isB ? KEY_B : KEY_A;
+        // One spelling only: the parser matches keys case-insensitively and
+        // rejects the config outright if it sees two.
+        cfg["nodeKey"]       = nodeKey;
         cfg["staticNodes"]   = json::array({ peer.str() });
+        // Not set: `messagingOverrides.backfillEnabled = false`. It belongs to
+        // the layered config shape, which rejects every flat WakuNodeConf key
+        // above; the flat shape has no way to say it. So subscribing to a
+        // station still pulls its recent history from Store first — megabytes
+        // of fragments the viewer drops as too old to play. Move to the
+        // layered shape (keys under `kernelConf`) once that is verified.
 
         const StdLogosResult r = modules().delivery_module.createNode(cfg.dump());
         // Two paths can race to bring the node up (the UI's button and the

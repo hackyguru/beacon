@@ -80,7 +80,7 @@ const char* const kPlayerHtml = R"HTML(<!doctype html>
         liveBufferLatencyMinRemain:0.8 });
     player.attachMediaElement(v);
     player.on(mpegts.Events.ERROR, function(a,b2,c){
-      lastErr = 'stream '+a+'/'+b2; report(); setTimeout(restart, 2000);
+      lastErr = 'stream '+a+'/'+b2; report(); scheduleRestart(2000);
     });
     player.load();
     v.play().catch(function(e){ lastErr='autoplay blocked: '+e.name; report(); });
@@ -90,6 +90,27 @@ const char* const kPlayerHtml = R"HTML(<!doctype html>
     try{ if(player){ player.destroy(); player=null; } }catch(e){}
     start();
   }
+  var restartTimer=null;
+  function scheduleRestart(ms){
+    if(restartTimer) return;
+    restartTimer=setTimeout(function(){ restartTimer=null; restart(); }, ms);
+  }
+  // A decode error on the element — a broadcast that restarted under the
+  // player, or changed codec — never reaches mpegts.js's ERROR event.
+  v.addEventListener('error', function(){
+    lastErr='media '+(v.error? v.error.code : '?'); report(); scheduleRestart(1000);
+  });
+  // Bytes arriving but no picture for a while: the stream is not what the
+  // player locked on to. Start over rather than sit on a black screen.
+  var blankSince=0;
+  setInterval(function(){
+    var hasData=false;
+    try{ hasData = v.buffered.length>0; }catch(e){}
+    if(hasData && !v.videoWidth){
+      if(!blankSince) blankSince=Date.now();
+      else if(Date.now()-blankSince>8000){ blankSince=0; lastErr='no picture'; report(); scheduleRestart(0); }
+    } else blankSince=0;
+  }, 1000);
   v.addEventListener('playing', function(){ lastErr=''; o.classList.add('hidden'); });
   function go(){ v.muted=false; v.play().catch(function(e){ lastErr='play(): '+e.name; }); o.classList.add('hidden'); }
   b.onclick=go; document.body.addEventListener('click', function(){ if(v.paused) go(); });
